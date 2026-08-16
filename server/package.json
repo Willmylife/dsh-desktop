@@ -1,0 +1,9 @@
+{
+  "name": "dsh-desktop-server",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Bundled dsh server runtime (copied verbatim into the app via extraResources)",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6"
+  }
+}
