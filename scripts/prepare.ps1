@@ -16,14 +16,23 @@ if (!(Test-Path "$root\runtime\node\node.exe")) {
 
 # 2. Server dependencies. The tree is renamed to dsh-modules because
 #    electron-builder's extraResources copy silently drops any source
-#    directory named node_modules.
+#    directory named node_modules. A junction restores the literal
+#    node_modules name alongside it: Node's module resolution only walks
+#    into directories actually named node_modules, so dev mode needs it.
+$nm = "$root\server\node_modules"
+$dm = "$root\server\dsh-modules"
+# Drop a stale junction from a previous run so npm installs into a real dir.
+if (Test-Path $nm) {
+  $item = Get-Item $nm -Force
+  if ($item.LinkType -eq 'Junction') { $item.Delete() }
+}
 Push-Location "$root\server"
 npm install
 Pop-Location
-if (Test-Path "$root\server\node_modules") {
-  if (Test-Path "$root\server\dsh-modules") {
-    Remove-Item "$root\server\dsh-modules" -Recurse -Force
-  }
-  Rename-Item "$root\server\node_modules" 'dsh-modules'
-  Write-Host 'Server tree ready (node_modules -> dsh-modules).'
+if ((Test-Path $nm) -and (-not (Test-Path $dm))) {
+  Rename-Item $nm 'dsh-modules'
 }
+if ((Test-Path $dm) -and (-not (Test-Path $nm))) {
+  cmd /c mklink /J "$nm" "$dm" | Out-Null
+}
+Write-Host 'Server tree ready (dsh-modules + node_modules junction).'

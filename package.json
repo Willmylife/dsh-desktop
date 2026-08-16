@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DeepSeek Harness desktop app",
   "main": "main.js",
   "author": "dsh-desktop",
@@ -33,7 +33,8 @@
       }
     ],
     "files": [
-      "main.js"
+      "main.js",
+      "build/dsh.ico"
     ],
     "win": {
       "icon": "build/dsh.ico",

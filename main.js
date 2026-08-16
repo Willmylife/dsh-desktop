@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, Tray, Menu, nativeImage } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
@@ -11,17 +11,59 @@ const URL = `http://127.0.0.1:${PORT}/`;
 let mainWindow = null;
 let serverProcess = null;
 let serverSpawned = false;
+let tray = null;
+let hideHintShown = false;
+
+function iconPath() {
+  // In packaged builds only main.js + build/ ship in the app dir (asar disabled).
+  return path.join(__dirname, 'build', 'dsh.ico');
+}
+
+function createTray() {
+  const image = nativeImage.createFromPath(iconPath());
+  tray = new Tray(image.resize({ width: 16, height: 16 }));
+  tray.setToolTip('DeepSeek Harness');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: '显示窗口 / Show',
+      click: () => showMainWindow()
+    },
+    {
+      label: '退出 / Quit',
+      click: () => {
+        app.quit();
+      }
+    }
+  ]));
+  tray.on('click', () => showMainWindow());
+}
+
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow();
+    loadAppWhenReady();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 function dshBinPath() {
   // The server tree ships verbatim under resources/app-server (extraResources,
-  // immune to electron-builder's node_modules pruning).
-  const base = app.isPackaged
-    ? path.join(process.resourcesPath, 'app-server')
-    : path.join(__dirname, 'server');
-  const pkgPath = path.join(base, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  const bin = typeof pkg.bin === 'string' ? pkg.bin : (pkg.bin && pkg.bin.dsh);
-  return path.join(base, 'node_modules', '@deepseek-ai', 'dsh', bin);
+  // immune to electron-builder's node_modules pruning). In dev, prepare.ps1
+  // renames server/node_modules to dsh-modules for the same reason.
+  const bases = app.isPackaged
+    ? [path.join(process.resourcesPath, 'app-server', 'node_modules')]
+    : [path.join(__dirname, 'server', 'dsh-modules'), path.join(__dirname, 'server', 'node_modules')];
+  for (const base of bases) {
+    const pkgPath = path.join(base, '@deepseek-ai', 'dsh', 'package.json');
+    if (!fs.existsSync(pkgPath)) continue;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const bin = typeof pkg.bin === 'string' ? pkg.bin : (pkg.bin && pkg.bin.dsh);
+    return path.join(base, '@deepseek-ai', 'dsh', bin);
+  }
+  throw new Error(`dsh server tree not found (looked in: ${bases.join(', ')})`);
 }
 
 function checkServer() {
@@ -64,6 +106,10 @@ function startServer() {
 
     serverProcess.stdout.pipe(logStream, { end: false });
     serverProcess.stderr.pipe(logStream, { end: false });
+    serverProcess.on('error', (err) => {
+      logStream.write(`[${new Date().toISOString()}] spawn error: ${err.message}\n`);
+      serverProcess = null;
+    });
     serverProcess.on('exit', (code) => {
       logStream.write(`[${new Date().toISOString()}] dsh web exited with code ${code}\n`);
       serverProcess = null;
@@ -116,6 +162,23 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Closing hides to the tray: the app and its dsh server keep running
+  // so sessions stay alive; quit from the tray menu instead.
+  mainWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+      if (!hideHintShown && tray) {
+        hideHintShown = true;
+        tray.displayBalloon({
+          iconType: 'info',
+          title: 'DeepSeek Harness',
+          content: '已最小化到系统托盘，服务器保持运行。右键托盘图标可退出。 / Still running in the tray — right-click the tray icon to quit.'
+        });
+      }
+    }
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -125,6 +188,8 @@ function loadAppWhenReady() {
     ready.then(() => {
       if (mainWindow) mainWindow.loadURL(URL).catch(() => {});
     }).catch((err) => {
+      const logFile = path.join(app.getPath('userData'), 'dsh-server.log');
+      fs.appendFileSync(logFile, `[${new Date().toISOString()}] load failed: ${err.message}\n`);
       if (!mainWindow) return;
       mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(
         `<!doctype html><html><head><meta charset="utf-8"><title>DeepSeek Harness</title>` +
@@ -140,27 +205,24 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(() => {
+    createTray();
     createWindow();
     loadAppWhenReady();
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-        loadAppWhenReady();
-      }
+      showMainWindow();
     });
   });
 
-  app.on('before-quit', killServer);
-  app.on('window-all-closed', () => {
+  // Quit flow: tray menu Quit or OS shutdown. The 'close' handler hides the
+  // window instead of destroying it, so window-all-closed only fires on real quit.
+  app.on('before-quit', () => {
+    app.isQuitting = true;
+    if (tray) { tray.destroy(); tray = null; }
     killServer();
-    app.quit();
   });
 }
