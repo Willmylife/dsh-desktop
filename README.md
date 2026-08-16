@@ -54,6 +54,24 @@ $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-
 - 仅支持 Windows x64
 - 升级 dsh 版本：改 `server/package.json` 里的版本号，重跑 `scripts/prepare.ps1` 再打包
 
+## 插件市场排障
+
+**更新插件时提示"这个新版本刚发布不久……可以明天再试"**：这不是 bug，是 pnpm 的供应链安全策略（`minimumReleaseAge`）——新发布的包默认等约 24 小时再安装，防止刚发布就被撤回的坏版本。对发版频繁的插件（dshmarket 本身几乎每天发版）会经常遇到。
+
+两种解决方式：
+
+1. 点市场页面里的**「立即更新」**按钮——一次性跳过等待，最简单。
+2. 长期免等待：编辑 `%USERPROFILE%\.dsh\profiles\web\pnpm-workspace.yaml`，把插件加入豁免名单（写包名不写版本号 = 所有版本都免等待）：
+
+   ```yaml
+   minimumReleaseAgeExclude:
+     - dshmarket
+   ```
+
+   然后在 `%USERPROFILE%\.dsh\profiles\web` 目录执行 `dsh plugin --profile web add dshmarket@latest`，或回到市场页正常更新。
+
+> 注意：豁免名单里如果写的是 `dshmarket@1.4.1` 这种精确版本，只对这一个版本生效——插件发新版后依然会被拦，这是最常见的"反复报错"原因。
+
 ## 许可
 
 本项目封装代码以 MIT 发布。DeepSeek Harness 本体及其依赖遵循各自的开源许可。
